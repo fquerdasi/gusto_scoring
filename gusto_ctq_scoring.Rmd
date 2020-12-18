@@ -1,0 +1,244 @@
+---
+title: "gusto_ctq_cleaning"
+author: "Fran Querdasi"
+date: "11/30/2020"
+output: html_document
+---
+
+#Setup for knitting
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60), tidy=TRUE)
+```
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(knitr)
+library(readr)
+library(psych)
+library(lubridate)
+library(readxl)
+library(stringr)
+```
+
+## Import data
+```{r}
+ctq_file <- "../../data/stress/GUSTO_M54_CTQ_20191119.xlsx"
+
+ctq_data <-
+  read_excel(ctq_file)
+```
+
+## Clean
+
+```{r}
+#get rid of variables that gusto calculated
+ctq_data_clean <-
+  ctq_data %>% 
+  select(
+    c(subjid:q28...31),
+    -c(...35:q28...63),
+    -c(twinid:language_conducted)
+  )
+
+#grab calculated subscores to compare to later
+ctq_scores_calculated <-
+  ctq_data %>% 
+  select(
+    subjid,
+    c(ctq_ea_m54:ctq_co_m54)
+  )
+
+#rename vars to get rid of ...<num>
+#rename_with(ctq_data_clean, ~gsub("...*", "", .x, fixed = T), .cols = -c(subjid, person_filling:comments_box))
+
+#convert all question responses to num
+ctq_data_clean <-
+  ctq_data_clean %>% 
+  mutate_at(vars(-subjid), list(~ str_extract(., "[12345]")), na.rm = T) %>% 
+  left_join( #add back the non-numeric columns we might need; if included above, get transformed to NA
+    ctq_data %>% 
+      select(
+        subjid,
+        person_filling,
+        others_specify_text,
+        comments_box
+      ), by = "subjid"
+  )
+
+```
+
+## Reverse code (qs: 5, 7, 13, 19, 28, 2, 26)
+
+```{r}
+library(car)
+ctq_data_clean$q7_r <- recode(ctq_data_clean$q7...10, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q5_r <- recode(ctq_data_clean$q5...8, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q13_r <- recode(ctq_data_clean$q13...16, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q19_r <- recode(ctq_data_clean$q19...22, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q28_r <- recode(ctq_data_clean$q28...31, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q2_r <- recode(ctq_data_clean$q2...5, "1=5; 2=4; 3=3; 4=2; 5=1")
+ctq_data_clean$q26_r <- recode(ctq_data_clean$q26...29, "1=5; 2=4; 3=3; 4=2; 5=1")
+
+```
+
+## Calculate subscale scores (each scale's range = 5-25)
+```{r}
+#grab question vars
+ctq_question_vars <-
+  ctq_data_clean %>% 
+  select(contains("q")) %>% 
+  names()
+
+#convert questions to numeric
+ctq_data_clean <-
+  ctq_data_clean %>% 
+  mutate_at(vars(ctq_question_vars), list(~as.double(.)))
+
+#emotional abuse subscale
+ctq_data_clean <-
+  ctq_data_clean %>% 
+  mutate(
+    ctq_ea_score = q3...6 + q8...11 + q14...17 + q18...21 + q25...28,
+    ctq_pa_score = q9...12 + q11...14 + q12...15 + q15...18 + q17...20,
+    ctq_sa_score = q20...23 + q21...24 + q23...26 + q24...27 + q27...30,
+    ctq_en_score = q5_r + q7_r + q13_r + q19_r + q28_r,
+    ctq_pn_score = q1...4 + q2_r + q4...7 + q6...9 + q26_r
+  )
+
+#check subscales against already calculated scores
+
+# ctq_subscales_check <-
+#   ctq_data_clean %>% 
+#   select(
+#     subjid,
+#     ctq_ea_score,
+#     ctq_pa_score,
+#     ctq_sa_score,
+#     ctq_em_score,
+#     ctq_pm_score
+#   ) %>% 
+#   left_join(
+#     ctq_scores_calculated, by = "subjid"
+#   )
+```
+
+## Calculate CTQ total score (range = 25-100)
+
+```{r}
+ctq_data_clean <-
+  ctq_data_clean %>% 
+  mutate(
+    ctq_total_score = ctq_ea_score + ctq_en_score + ctq_pa_score + ctq_pn_score + ctq_sa_score
+  )
+```
+
+## Quick descriptive stats
+```{r}
+#total score
+ctq_data_clean%>% 
+  ggplot(aes(ctq_total_score)) +
+  geom_histogram(binwidth = 1)
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_totscore_hist.png",
+  width = 10,
+  height = 10
+  )
+
+#ea score
+ctq_data_clean%>% 
+  ggplot(aes(ctq_ea_score)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(aes(xintercept = 9, colour="Low")) +
+  scale_color_manual(name = "cutoffs", values = c(Low = "red"))
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_eascore_hist.png",
+  width = 10,
+  height = 10
+  )
+
+#pa
+ctq_data_clean%>% 
+  ggplot(aes(ctq_pa_score)) +
+  geom_histogram(binwidth = 1) + 
+  geom_vline(aes(xintercept = 8, colour="Low")) +
+  scale_color_manual(name = "cutoffs", values = c(Low = "red"))
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_pascore_hist.png",
+  width = 10,
+  height = 10
+  )
+
+#sa
+ctq_data_clean%>% 
+  ggplot(aes(ctq_sa_score)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(aes(xintercept = 6, colour="Low")) +
+  scale_color_manual(name = "cutoffs", values = c(Low = "red"))
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_sascore_hist.png",
+  width = 10,
+  height = 10
+  )
+
+#em
+ctq_data_clean%>% 
+  ggplot(aes(ctq_en_score)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(aes(xintercept = 10, colour="Low")) +
+  scale_color_manual(name = "cutoffs", values = c(Low = "red"))
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_enscore_hist.png",
+  width = 10,
+  height = 10
+  )
+
+#pm
+ctq_data_clean%>% 
+  ggplot(aes(ctq_pn_score)) +
+  geom_histogram(binwidth = 1) +
+  geom_vline(aes(xintercept = 8, colour="Low")) +
+  scale_color_manual(name = "cutoffs", values = c(Low = "red"))
+
+ggsave(
+  "../../figures/descriptives/GUSTO_M54_CTQ_pnscore_hist.png",
+  width = 10,
+  height = 10
+  )
+```
+
+## Select variables to save in cleaned dataset
+```{r}
+ 
+ctq_data_tosave <-
+  ctq_data_clean %>% 
+  select(
+    subjid,
+    c(ctq_ea_score:ctq_total_score),
+    person_filling
+  )
+
+#determine which year the data is from, extract that part of the file name
+year <- substr(substring(ctq_file, regexpr("(_[M|Y][0-9]?[1-9]_)", ctq_file)), 1, 4)
+
+#change column names
+colnames(ctq_data_tosave) <- paste0(colnames(ctq_data_tosave), year)
+#change first column name back (because ID is constant across age and needs to be the same so we can merge files)
+colnames(ctq_data_tosave)[1] <- str_replace(colnames(ctq_data_tosave)[1], year, "")
+
+```
+
+## Save output file
+```{r}
+#create file name which contains today's date and child age data were collected in years
+out_file_name <- str_c("../../data/stress/GUSTO", year, "_CTQ_clean_", str_replace_all(Sys.Date(), "-", ""), ".csv")
+
+write_csv(ctq_data_tosave, out_file_name)
+```
+
